@@ -195,21 +195,21 @@ function App() {
       }));
 
       // Create a partial Supreme Court message that will be updated progressively
-      // New flow: Stage1 -> Clerk -> Stage2 -> Stage3 -> Stage4 -> Stage5
+      // New flow: Stage1 (positions) -> Stage2 (reconsideration) -> Clerk (grouping) -> Stage3 (majority draft/feedback) -> Stage4 (release) -> Stage5 (dissent)
       const assistantMessage = {
         role: 'assistant',
         type: 'supreme_court',
-        stage1: null,
-        grouping: null,
-        stage2: null,
-        stage3: null,
-        majority_opinion: null,
-        dissent_opinion: null,
+        stage1: null,         // Initial positions
+        stage2: null,         // Reconsideration results
+        grouping: null,       // Clerk grouping
+        majority_process: null, // Draft, feedback, final
+        majority_opinion: null, // Released majority
+        dissent_opinion: null,  // Released dissent
         metadata: null,
         loading: {
           stage1: false,
-          clerk: false,
           stage2: false,
+          clerk: false,
           stage3: false,
           stage4: false,
           stage5: false,
@@ -225,6 +225,7 @@ function App() {
       // Send message with streaming
       await api.sendSupremeCourtMessageStream(currentConversationId, content, (eventType, event) => {
         switch (eventType) {
+          // Stage 1: Initial positions
           case 'sc_stage1_start':
             setCurrentConversation((prev) => {
               const messages = [...prev.messages];
@@ -244,25 +245,7 @@ function App() {
             });
             break;
 
-          case 'sc_clerk_start':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-              lastMsg.loading.clerk = true;
-              return { ...prev, messages };
-            });
-            break;
-
-          case 'sc_clerk_complete':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-              lastMsg.grouping = event.data;
-              lastMsg.loading.clerk = false;
-              return { ...prev, messages };
-            });
-            break;
-
+          // Stage 2: Reconsideration
           case 'sc_stage2_start':
             setCurrentConversation((prev) => {
               const messages = [...prev.messages];
@@ -282,6 +265,27 @@ function App() {
             });
             break;
 
+          // Clerk: Grouping
+          case 'sc_clerk_start':
+            setCurrentConversation((prev) => {
+              const messages = [...prev.messages];
+              const lastMsg = messages[messages.length - 1];
+              lastMsg.loading.clerk = true;
+              return { ...prev, messages };
+            });
+            break;
+
+          case 'sc_clerk_complete':
+            setCurrentConversation((prev) => {
+              const messages = [...prev.messages];
+              const lastMsg = messages[messages.length - 1];
+              lastMsg.grouping = event.data;
+              lastMsg.loading.clerk = false;
+              return { ...prev, messages };
+            });
+            break;
+
+          // Stage 3: Majority draft/feedback/finalize
           case 'sc_stage3_start':
             setCurrentConversation((prev) => {
               const messages = [...prev.messages];
@@ -295,12 +299,13 @@ function App() {
             setCurrentConversation((prev) => {
               const messages = [...prev.messages];
               const lastMsg = messages[messages.length - 1];
-              lastMsg.stage3 = event.data;
+              lastMsg.majority_process = event.data;
               lastMsg.loading.stage3 = false;
               return { ...prev, messages };
             });
             break;
 
+          // Stage 4: Release majority
           case 'sc_stage4_start':
             setCurrentConversation((prev) => {
               const messages = [...prev.messages];
@@ -320,6 +325,7 @@ function App() {
             });
             break;
 
+          // Stage 5: Dissent (if split)
           case 'sc_stage5_start':
             setCurrentConversation((prev) => {
               const messages = [...prev.messages];

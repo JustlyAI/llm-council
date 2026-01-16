@@ -177,12 +177,12 @@ def add_supreme_court_message(conversation_id: str, result: Dict[str, Any]):
     Add a Supreme Court deliberation result to a conversation.
 
     Flow:
-    1. Stage 1: Individual justice opinions
-    2. Clerk Stage: Grouping into majority/minority
-    3. Stage 2: Within-group peer rankings
-    4. Stage 3: Leads synthesize opinions
-    5. Stage 4: Majority opinion completed
-    6. Stage 5: Dissenting opinion completed
+    1. Stage 1: Initial positions from all 9 justices
+    2. Stage 2: Reconsideration - each justice reads others and decides MAINTAIN/CHANGE
+    3. Clerk Stage: Group justices based on final positions
+    4. Stage 3: Majority opinion (lead drafts, members feedback, lead finalizes)
+    5. Stage 4: Release majority opinion
+    6. Stage 5: Dissent (if split) - minority sees majority, drafts with feedback
 
     Args:
         conversation_id: Conversation identifier
@@ -195,12 +195,12 @@ def add_supreme_court_message(conversation_id: str, result: Dict[str, Any]):
     conversation["messages"].append({
         "role": "assistant",
         "type": "supreme_court",
-        "stage1": result.get("stage1", []),
+        "stage1": result.get("stage1", []),  # Initial positions
+        "stage2": result.get("stage2", []),  # Reconsideration results
         "grouping": result.get("grouping", {}),
-        "stage2": result.get("stage2", {}),
-        "stage3": result.get("stage3", {}),
-        "majority_opinion": result.get("majority_opinion", {}),
-        "dissent_opinion": result.get("dissent_opinion"),
+        "majority_process": result.get("majority_process", {}),  # Draft, feedback, final
+        "majority_opinion": result.get("majority_opinion", {}),  # Released opinion
+        "dissent_opinion": result.get("dissent_opinion"),  # Released dissent (if split)
         "metadata": result.get("metadata", {}),
     })
 

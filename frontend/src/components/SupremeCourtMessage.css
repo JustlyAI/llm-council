@@ -445,6 +445,82 @@
   background: #f5e8e8;
 }
 
+/* Reconsideration styles */
+.sc-reconsideration-section {
+  padding: 8px;
+}
+
+.decision-badge {
+  font-size: 0.65rem;
+  padding: 2px 6px;
+  border-radius: 8px;
+  margin-left: 4px;
+  font-weight: 600;
+}
+
+.decision-badge.maintained {
+  background: #e8f5e0;
+  color: #5d8a4a;
+}
+
+.decision-badge.changed {
+  background: #fff3cd;
+  color: #856404;
+}
+
+.tab.changed {
+  border-left: 3px solid #ffc107;
+}
+
+.tab.maintained {
+  border-left: 3px solid #5d8a4a;
+}
+
+.reconsideration-decision {
+  margin-bottom: 12px;
+}
+
+.decision-label {
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 12px;
+}
+
+.decision-label.maintained {
+  background: #e8f5e0;
+  color: #5d8a4a;
+}
+
+.decision-label.changed {
+  background: #fff3cd;
+  color: #856404;
+}
+
+/* Process section styles */
+.sc-process-section {
+  padding: 8px;
+}
+
+.sc-positions-section {
+  padding: 8px;
+}
+
+.no-feedback {
+  color: #666;
+  font-style: italic;
+  padding: 16px;
+}
+
+.feedback-section {
+  padding: 8px;
+}
+
+.feedback-content {
+  background: #f9f7f4;
+  border-radius: 4px;
+  padding: 12px;
+}
+
 /* Loading states */
 .stage-loading {
   display: flex;

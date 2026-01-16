@@ -6,35 +6,78 @@ function getShortModelName(model) {
   return model?.split('/')[1] || model || 'Unknown';
 }
 
-function JusticeOpinionsTab({ opinions, title }) {
+// Stage 1: Initial Positions Display
+function InitialPositionsTab({ positions }) {
   const [activeTab, setActiveTab] = useState(0);
 
-  if (!opinions || opinions.length === 0) return null;
+  if (!positions || positions.length === 0) return null;
 
   return (
-    <div className="sc-opinions-section">
-      {title && <h4>{title}</h4>}
+    <div className="sc-positions-section">
       <div className="tabs">
-        {opinions.map((opinion, index) => (
+        {positions.map((pos, index) => (
           <button
             key={index}
             className={`tab ${activeTab === index ? 'active' : ''}`}
             onClick={() => setActiveTab(index)}
           >
-            {getShortModelName(opinion.model)}
+            {getShortModelName(pos.model)}
           </button>
         ))}
       </div>
       <div className="tab-content">
-        <div className="opinion-model">{opinions[activeTab].model}</div>
+        <div className="opinion-model">{positions[activeTab].model}</div>
         <div className="opinion-content markdown-content">
-          <ReactMarkdown>{opinions[activeTab].response}</ReactMarkdown>
+          <ReactMarkdown>{positions[activeTab].position}</ReactMarkdown>
         </div>
       </div>
     </div>
   );
 }
 
+// Stage 2: Reconsideration Display
+function ReconsiderationDisplay({ reconsiderations }) {
+  const [activeTab, setActiveTab] = useState(0);
+
+  if (!reconsiderations || reconsiderations.length === 0) return null;
+
+  const changedCount = reconsiderations.filter(r => r.changed).length;
+
+  return (
+    <div className="sc-reconsideration-section">
+      <p className="section-description">
+        After reading colleagues' positions, {changedCount} of {reconsiderations.length} justices changed their position.
+      </p>
+      <div className="tabs">
+        {reconsiderations.map((recon, index) => (
+          <button
+            key={index}
+            className={`tab ${activeTab === index ? 'active' : ''} ${recon.changed ? 'changed' : 'maintained'}`}
+            onClick={() => setActiveTab(index)}
+          >
+            {getShortModelName(recon.model)}
+            <span className={`decision-badge ${recon.changed ? 'changed' : 'maintained'}`}>
+              {recon.changed ? 'CHANGED' : 'MAINTAIN'}
+            </span>
+          </button>
+        ))}
+      </div>
+      <div className="tab-content">
+        <div className="opinion-model">{reconsiderations[activeTab].model}</div>
+        <div className="reconsideration-decision">
+          <span className={`decision-label ${reconsiderations[activeTab].changed ? 'changed' : 'maintained'}`}>
+            Decision: {reconsiderations[activeTab].decision}
+          </span>
+        </div>
+        <div className="opinion-content markdown-content">
+          <ReactMarkdown>{reconsiderations[activeTab].reconsideration}</ReactMarkdown>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Clerk Grouping Display
 function GroupingDisplay({ grouping }) {
   if (!grouping) return null;
 
@@ -88,151 +131,91 @@ function GroupingDisplay({ grouping }) {
   );
 }
 
-function WithinGroupRankingsDisplay({ stage2, grouping }) {
-  const [activeGroup, setActiveGroup] = useState('majority');
-  const [activeTab, setActiveTab] = useState(0);
+// Majority Process Display (Draft -> Feedback -> Final)
+function MajorityProcessDisplay({ process }) {
+  const [activeTab, setActiveTab] = useState('final');
 
-  if (!stage2) return null;
-
-  const groups = [];
-  if (stage2.majority_rankings?.rankings?.length > 0) {
-    groups.push({ key: 'majority', label: 'Majority Rankings', data: stage2.majority_rankings });
-  }
-  if (stage2.minority_rankings?.rankings?.length > 0) {
-    groups.push({ key: 'minority', label: 'Minority Rankings', data: stage2.minority_rankings });
-  }
-
-  if (groups.length === 0) return null;
-
-  const activeData = activeGroup === 'majority'
-    ? stage2.majority_rankings
-    : stage2.minority_rankings;
-
-  const rankings = activeData?.rankings || [];
-  const labelToModel = activeData?.label_to_model || {};
-
-  const deAnonymizeText = (text) => {
-    if (!labelToModel || !text) return text;
-    let result = text;
-    Object.entries(labelToModel).forEach(([label, model]) => {
-      const modelShortName = getShortModelName(model);
-      result = result.replace(new RegExp(label, 'g'), `**${modelShortName}**`);
-    });
-    return result;
-  };
+  if (!process) return null;
 
   return (
-    <div className="sc-rankings-section">
+    <div className="sc-process-section">
       <p className="section-description">
-        Each justice evaluated opinions within their own group. Model names shown in <strong>bold</strong> for readability.
+        Lead ({getShortModelName(process.lead)}) wrote a draft, received feedback from {process.feedback?.length || 0} members, then finalized.
       </p>
 
-      {groups.length > 1 && (
-        <div className="tabs group-tabs">
-          {groups.map(group => (
-            <button
-              key={group.key}
-              className={`tab ${activeGroup === group.key ? 'active' : ''}`}
-              onClick={() => { setActiveGroup(group.key); setActiveTab(0); }}
-            >
-              {group.label}
-            </button>
-          ))}
-        </div>
-      )}
+      <div className="tabs">
+        <button
+          className={`tab ${activeTab === 'draft' ? 'active' : ''}`}
+          onClick={() => setActiveTab('draft')}
+        >
+          Draft
+        </button>
+        <button
+          className={`tab ${activeTab === 'feedback' ? 'active' : ''}`}
+          onClick={() => setActiveTab('feedback')}
+        >
+          Feedback ({process.feedback?.length || 0})
+        </button>
+        <button
+          className={`tab ${activeTab === 'final' ? 'active' : ''}`}
+          onClick={() => setActiveTab('final')}
+        >
+          Final Opinion
+        </button>
+      </div>
 
-      {rankings.length > 0 && (
-        <>
-          <div className="tabs member-tabs">
-            {rankings.map((rank, index) => (
-              <button
-                key={index}
-                className={`tab ${activeTab === index ? 'active' : ''}`}
-                onClick={() => setActiveTab(index)}
-              >
-                {getShortModelName(rank.model)}
-              </button>
-            ))}
+      <div className="tab-content">
+        {activeTab === 'draft' && (
+          <div className="draft-opinion markdown-content">
+            <ReactMarkdown>{process.draft}</ReactMarkdown>
           </div>
-          <div className="tab-content">
-            <div className="ranking-content markdown-content">
-              <ReactMarkdown>
-                {deAnonymizeText(rankings[activeTab]?.ranking || '')}
-              </ReactMarkdown>
-            </div>
-            {rankings[activeTab]?.parsed_ranking?.length > 0 && (
-              <div className="parsed-ranking">
-                <strong>Extracted Ranking:</strong>
-                <ol>
-                  {rankings[activeTab].parsed_ranking.map((label, i) => (
-                    <li key={i}>
-                      {labelToModel[label]
-                        ? getShortModelName(labelToModel[label])
-                        : label}
-                    </li>
-                  ))}
-                </ol>
-              </div>
-            )}
+        )}
+
+        {activeTab === 'feedback' && (
+          <FeedbackDisplay feedback={process.feedback} />
+        )}
+
+        {activeTab === 'final' && (
+          <div className="final-opinion markdown-content">
+            <ReactMarkdown>{process.final_opinion}</ReactMarkdown>
           </div>
-        </>
-      )}
+        )}
+      </div>
     </div>
   );
 }
 
-function SynthesisDisplay({ stage3 }) {
-  const [activeTab, setActiveTab] = useState('majority');
+// Feedback Display
+function FeedbackDisplay({ feedback }) {
+  const [activeIdx, setActiveIdx] = useState(0);
 
-  if (!stage3) return null;
-
-  const tabs = [];
-  if (stage3.majority) tabs.push({ key: 'majority', label: 'Majority Synthesis' });
-  if (stage3.minority) tabs.push({ key: 'minority', label: 'Minority Synthesis' });
-
-  if (tabs.length === 0) return null;
-
-  const activeData = activeTab === 'majority' ? stage3.majority : stage3.minority;
+  if (!feedback || feedback.length === 0) {
+    return <p className="no-feedback">No feedback received.</p>;
+  }
 
   return (
-    <div className="sc-synthesis-section">
-      <p className="section-description">
-        Group leads synthesized opinions from peer feedback.
-      </p>
-
-      {tabs.length > 1 && (
-        <div className="tabs">
-          {tabs.map(tab => (
-            <button
-              key={tab.key}
-              className={`tab ${activeTab === tab.key ? 'active' : ''}`}
-              onClick={() => setActiveTab(tab.key)}
-            >
-              {tab.label}
-            </button>
-          ))}
+    <div className="feedback-section">
+      <div className="tabs">
+        {feedback.map((fb, index) => (
+          <button
+            key={index}
+            className={`tab ${activeIdx === index ? 'active' : ''}`}
+            onClick={() => setActiveIdx(index)}
+          >
+            {getShortModelName(fb.model)}
+          </button>
+        ))}
+      </div>
+      <div className="tab-content">
+        <div className="feedback-content markdown-content">
+          <ReactMarkdown>{feedback[activeIdx].feedback}</ReactMarkdown>
         </div>
-      )}
-
-      {activeData && (
-        <div className="tab-content synthesis-content">
-          <div className="synthesis-header">
-            <span className="synthesis-lead">
-              Lead: {getShortModelName(activeData.lead)}
-            </span>
-            <span className="synthesis-members">
-              Group: {activeData.group_members?.map(getShortModelName).join(', ')}
-            </span>
-          </div>
-          <div className="synthesis-opinion markdown-content">
-            <ReactMarkdown>{activeData.opinion}</ReactMarkdown>
-          </div>
-        </div>
-      )}
+      </div>
     </div>
   );
 }
 
+// Final Opinion Display
 function FinalOpinionDisplay({ opinion, type, isConsensus }) {
   if (!opinion || !opinion.opinion) return null;
 
@@ -248,7 +231,7 @@ function FinalOpinionDisplay({ opinion, type, isConsensus }) {
           Authored by: {getShortModelName(opinion.lead)}
         </span>
         <span className="opinion-signers">
-          Joined by: {opinion.group_members?.map(getShortModelName).join(', ')}
+          Joined by: {opinion.members?.map(getShortModelName).join(', ')}
         </span>
       </div>
       <div className={`final-opinion-text markdown-content ${type}`}>
@@ -261,9 +244,9 @@ function FinalOpinionDisplay({ opinion, type, isConsensus }) {
 export default function SupremeCourtMessage({ message }) {
   const [expandedSections, setExpandedSections] = useState({
     stage1: false,
-    clerk: true,
     stage2: false,
-    stage3: false,
+    clerk: true,
+    process: false,
     final: true,
   });
 
@@ -273,9 +256,9 @@ export default function SupremeCourtMessage({ message }) {
 
   const {
     stage1,
-    grouping,
     stage2,
-    stage3,
+    grouping,
+    majority_process,
     majority_opinion,
     dissent_opinion,
     metadata,
@@ -283,6 +266,7 @@ export default function SupremeCourtMessage({ message }) {
   } = message;
 
   const isConsensus = grouping?.consensus || metadata?.consensus;
+  const votesChanged = metadata?.votes_changed || 0;
 
   return (
     <div className="supreme-court-message">
@@ -291,11 +275,11 @@ export default function SupremeCourtMessage({ message }) {
         <span className="sc-justice-count">9 Justices</span>
       </div>
 
-      {/* Stage 1: Individual Opinions */}
+      {/* Stage 1: Initial Positions */}
       {loading?.stage1 && (
         <div className="stage-loading">
           <div className="spinner"></div>
-          <span>Stage 1: Collecting justice opinions...</span>
+          <span>Stage 1: Collecting initial positions...</span>
         </div>
       )}
       {stage1 && (
@@ -305,10 +289,32 @@ export default function SupremeCourtMessage({ message }) {
             onClick={() => toggleSection('stage1')}
           >
             <span className="toggle-icon">{expandedSections.stage1 ? '▼' : '▶'}</span>
-            Stage 1: Individual Justice Opinions ({stage1.length} responses)
+            Stage 1: Initial Positions ({stage1.length} justices)
           </button>
           {expandedSections.stage1 && (
-            <JusticeOpinionsTab opinions={stage1} />
+            <InitialPositionsTab positions={stage1} />
+          )}
+        </div>
+      )}
+
+      {/* Stage 2: Reconsideration */}
+      {loading?.stage2 && (
+        <div className="stage-loading">
+          <div className="spinner"></div>
+          <span>Stage 2: Justices reconsidering after reading colleagues...</span>
+        </div>
+      )}
+      {stage2 && (
+        <div className="collapsible-section">
+          <button
+            className="section-toggle"
+            onClick={() => toggleSection('stage2')}
+          >
+            <span className="toggle-icon">{expandedSections.stage2 ? '▼' : '▶'}</span>
+            Stage 2: Reconsideration ({votesChanged} changed positions)
+          </button>
+          {expandedSections.stage2 && (
+            <ReconsiderationDisplay reconsiderations={stage2} />
           )}
         </div>
       )}
@@ -317,7 +323,7 @@ export default function SupremeCourtMessage({ message }) {
       {loading?.clerk && (
         <div className="stage-loading">
           <div className="spinner"></div>
-          <span>Clerk: Analyzing and grouping justices...</span>
+          <span>Clerk: Grouping justices...</span>
         </div>
       )}
       {grouping && (
@@ -335,46 +341,24 @@ export default function SupremeCourtMessage({ message }) {
         </div>
       )}
 
-      {/* Stage 2: Within-Group Rankings */}
-      {loading?.stage2 && (
-        <div className="stage-loading">
-          <div className="spinner"></div>
-          <span>Stage 2: Within-group peer rankings...</span>
-        </div>
-      )}
-      {stage2 && (stage2.majority_rankings || stage2.minority_rankings) && (
-        <div className="collapsible-section">
-          <button
-            className="section-toggle"
-            onClick={() => toggleSection('stage2')}
-          >
-            <span className="toggle-icon">{expandedSections.stage2 ? '▼' : '▶'}</span>
-            Stage 2: Within-Group Peer Rankings
-          </button>
-          {expandedSections.stage2 && (
-            <WithinGroupRankingsDisplay stage2={stage2} grouping={grouping} />
-          )}
-        </div>
-      )}
-
-      {/* Stage 3: Lead Synthesis */}
+      {/* Stage 3: Majority Opinion Process */}
       {loading?.stage3 && (
         <div className="stage-loading">
           <div className="spinner"></div>
-          <span>Stage 3: Leads synthesizing opinions...</span>
+          <span>Stage 3: Majority lead drafting with member feedback...</span>
         </div>
       )}
-      {stage3 && (stage3.majority || stage3.minority) && (
+      {majority_process && (
         <div className="collapsible-section">
           <button
             className="section-toggle"
-            onClick={() => toggleSection('stage3')}
+            onClick={() => toggleSection('process')}
           >
-            <span className="toggle-icon">{expandedSections.stage3 ? '▼' : '▶'}</span>
-            Stage 3: Lead Synthesis (Draft Opinions)
+            <span className="toggle-icon">{expandedSections.process ? '▼' : '▶'}</span>
+            Stage 3: Majority Opinion Process (Draft → Feedback → Final)
           </button>
-          {expandedSections.stage3 && (
-            <SynthesisDisplay stage3={stage3} />
+          {expandedSections.process && (
+            <MajorityProcessDisplay process={majority_process} />
           )}
         </div>
       )}
@@ -384,7 +368,7 @@ export default function SupremeCourtMessage({ message }) {
         <div className="stage-loading">
           <div className="spinner"></div>
           <span>
-            {loading?.stage4 ? 'Stage 4: Completing majority opinion...' : 'Stage 5: Completing dissenting opinion...'}
+            {loading?.stage4 ? 'Stage 4: Releasing majority opinion...' : 'Stage 5: Minority writing dissent...'}
           </span>
         </div>
       )}

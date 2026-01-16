@@ -1,4 +1,13 @@
-"""Supreme Court deliberation system with clerk-based grouping and opinion writing."""
+"""Supreme Court deliberation system with clerk-based grouping and opinion writing.
+
+Flow:
+1. Stage 1: Collect individual justice opinions from all 9 models
+2. Clerk Stage: Analyze opinions and group justices into majority/minority (or consensus)
+3. Stage 2: Within-group peer ranking (justices rate only their group's opinions)
+4. Stage 3: Leads synthesize final opinions from group feedback
+5. Stage 4: Majority opinion completed
+6. Stage 5: Dissenting opinion completed (if split decision)
+"""
 
 from typing import List, Dict, Any, Tuple, Optional
 from .openrouter import query_models_parallel, query_model
@@ -7,7 +16,6 @@ from .config import (
     MODEL_POWER_RANKINGS,
     CLERK_MODEL,
 )
-from .council import parse_ranking_from_text, calculate_aggregate_rankings
 
 
 async def stage1_collect_justice_opinions(user_query: str) -> List[Dict[str, Any]]:
@@ -43,100 +51,19 @@ Please provide your individual opinion on this matter. Be thorough, well-reasone
     return results
 
 
-async def stage2_collect_rankings(
-    user_query: str,
-    stage1_results: List[Dict[str, Any]]
-) -> Tuple[List[Dict[str, Any]], Dict[str, str]]:
-    """
-    Stage 2: Each justice ranks the anonymized opinions.
-
-    Args:
-        user_query: The original case/question
-        stage1_results: Results from Stage 1
-
-    Returns:
-        Tuple of (rankings list, label_to_model mapping)
-    """
-    # Create anonymized labels
-    labels = [chr(65 + i) for i in range(len(stage1_results))]  # A, B, C, ...
-
-    label_to_model = {
-        f"Response {label}": result['model']
-        for label, result in zip(labels, stage1_results)
-    }
-
-    # Build the ranking prompt
-    responses_text = "\n\n".join([
-        f"Opinion {label}:\n{result['response']}"
-        for label, result in zip(labels, stage1_results)
-    ])
-
-    ranking_prompt = f"""You are evaluating different judicial opinions on the following case:
-
-Case/Question: {user_query}
-
-Here are the opinions from different justices (anonymized):
-
-{responses_text}
-
-Your task:
-1. Evaluate each opinion based on:
-   - Legal/logical reasoning quality
-   - Comprehensiveness of analysis
-   - Practical applicability
-   - Clarity of argumentation
-2. Determine which side of the issue each opinion supports (if applicable)
-3. Provide a final ranking from best to worst
-
-IMPORTANT: Your final ranking MUST be formatted EXACTLY as follows:
-- Start with the line "FINAL RANKING:" (all caps, with colon)
-- Then list the opinions from best to worst as a numbered list
-- Each line should be: number, period, space, then ONLY the opinion label (e.g., "1. Response A")
-
-Example format:
-FINAL RANKING:
-1. Response C
-2. Response A
-3. Response B
-
-Now provide your evaluation and ranking:"""
-
-    messages = [{"role": "user", "content": ranking_prompt}]
-
-    # Get rankings from all justices in parallel
-    responses = await query_models_parallel(SUPREME_COURT_JUSTICES, messages)
-
-    results = []
-    for model, response in responses.items():
-        if response is not None:
-            full_text = response.get('content', '')
-            parsed = parse_ranking_from_text(full_text)
-            results.append({
-                "model": model,
-                "ranking": full_text,
-                "parsed_ranking": parsed
-            })
-
-    return results, label_to_model
-
-
 async def clerk_analyze_and_group(
     user_query: str,
-    stage1_results: List[Dict[str, Any]],
-    stage2_results: List[Dict[str, Any]],
-    aggregate_rankings: List[Dict[str, Any]]
+    stage1_results: List[Dict[str, Any]]
 ) -> Dict[str, Any]:
     """
-    Clerk analyzes opinions and groups justices into majority/minority (or consensus).
+    Clerk Stage: Analyze opinions and group justices into majority/minority (or consensus).
 
     The clerk examines the substantive positions in each opinion to determine
-    groupings based on actual stance, not just ranking quality.
+    groupings based on actual stance, not ranking quality.
 
     Args:
         user_query: The original case/question
-        stage1_results: Individual opinions
-        stage2_results: Peer rankings
-        aggregate_rankings: Aggregated ranking scores
+        stage1_results: Individual opinions from Stage 1
 
     Returns:
         Dict with grouping information:
@@ -193,8 +120,8 @@ Now analyze the opinions and provide the grouping:"""
     response = await query_model(CLERK_MODEL, messages)
 
     if response is None:
-        # Fallback: Use top 5 by ranking as majority, rest as minority
-        return _fallback_grouping(stage1_results, aggregate_rankings)
+        # Fallback: Simple majority split
+        return _fallback_grouping(stage1_results)
 
     clerk_analysis = response.get('content', '')
     return _parse_clerk_grouping(clerk_analysis, stage1_results)
@@ -257,24 +184,13 @@ def _parse_clerk_grouping(
     }
 
 
-def _fallback_grouping(
-    stage1_results: List[Dict[str, Any]],
-    aggregate_rankings: List[Dict[str, Any]]
-) -> Dict[str, Any]:
-    """Fallback grouping based on rankings (top 5 = majority)."""
+def _fallback_grouping(stage1_results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Fallback grouping: simple 5-4 split."""
     all_models = [r['model'] for r in stage1_results]
 
-    # Use aggregate rankings to split
-    ranked_models = [r['model'] for r in aggregate_rankings]
-
-    # Add any models not in rankings
-    for model in all_models:
-        if model not in ranked_models:
-            ranked_models.append(model)
-
-    # Top 5 = majority, rest = minority
-    majority = ranked_models[:5]
-    minority = ranked_models[5:]
+    # Simple split: first 5 = majority, rest = minority
+    majority = all_models[:5]
+    minority = all_models[5:]
 
     return {
         "consensus": False,
@@ -282,7 +198,7 @@ def _fallback_grouping(
         "minority": minority,
         "majority_lead": _select_lead(majority),
         "minority_lead": _select_lead(minority) if minority else None,
-        "clerk_analysis": "Fallback grouping: Clerk failed to respond, using ranking-based split."
+        "clerk_analysis": "Fallback grouping: Clerk failed to respond, using default split."
     }
 
 
@@ -294,104 +210,248 @@ def _select_lead(models: List[str]) -> Optional[str]:
     return max(models, key=lambda m: MODEL_POWER_RANKINGS.get(m, 0))
 
 
-async def stage3_write_draft_opinions(
+def _parse_ranking_from_text(ranking_text: str) -> List[str]:
+    """
+    Parse the FINAL RANKING section from the model's response.
+
+    Args:
+        ranking_text: The full text response from the model
+
+    Returns:
+        List of response labels in ranked order
+    """
+    import re
+
+    # Look for "FINAL RANKING:" section
+    if "FINAL RANKING:" in ranking_text:
+        parts = ranking_text.split("FINAL RANKING:")
+        if len(parts) >= 2:
+            ranking_section = parts[1]
+            # Try to extract numbered list format (e.g., "1. Opinion A")
+            numbered_matches = re.findall(r'\d+\.\s*Opinion [A-Z]', ranking_section)
+            if numbered_matches:
+                return [re.search(r'Opinion [A-Z]', m).group() for m in numbered_matches]
+
+            # Fallback: Extract all "Opinion X" patterns in order
+            matches = re.findall(r'Opinion [A-Z]', ranking_section)
+            return matches
+
+    # Fallback: try to find any "Opinion X" patterns in order
+    matches = re.findall(r'Opinion [A-Z]', ranking_text)
+    return matches
+
+
+async def stage2_within_group_rankings(
     user_query: str,
     stage1_results: List[Dict[str, Any]],
     grouping: Dict[str, Any]
 ) -> Dict[str, Any]:
     """
-    Stage 3: Group leads write draft opinions synthesizing their group's views.
+    Stage 2: Within-group peer ranking.
 
-    The leads receive anonymized versions of their group members' opinions
-    and must synthesize them into a cohesive draft opinion.
+    Each justice evaluates only the opinions from justices in their own group.
 
     Args:
         user_query: The original case/question
-        stage1_results: Individual opinions
+        stage1_results: Individual opinions from Stage 1
         grouping: Clerk's grouping decision
 
     Returns:
-        Dict with draft opinions for majority (and minority if split)
+        Dict with rankings for majority and minority groups
     """
     results = {}
 
     # Get opinions by model for easy lookup
     opinions_by_model = {r['model']: r['response'] for r in stage1_results}
 
-    # Majority draft opinion
-    majority_opinions = [
-        opinions_by_model[m] for m in grouping['majority']
-        if m in opinions_by_model
-    ]
-
-    majority_draft = await _write_group_draft(
+    # Majority group rankings
+    majority_rankings = await _rank_within_group(
         user_query,
-        majority_opinions,
-        grouping['majority_lead'],
+        grouping['majority'],
+        opinions_by_model,
         is_majority=True
     )
+    results['majority_rankings'] = majority_rankings
 
-    results['majority_draft'] = {
-        'lead': grouping['majority_lead'],
-        'opinion': majority_draft,
-        'group_members': grouping['majority']
-    }
-
-    # Minority draft opinion (if split decision)
+    # Minority group rankings (if split decision)
     if not grouping['consensus'] and grouping['minority']:
-        minority_opinions = [
-            opinions_by_model[m] for m in grouping['minority']
-            if m in opinions_by_model
-        ]
-
-        minority_draft = await _write_group_draft(
+        minority_rankings = await _rank_within_group(
             user_query,
-            minority_opinions,
-            grouping['minority_lead'],
+            grouping['minority'],
+            opinions_by_model,
             is_majority=False
         )
-
-        results['minority_draft'] = {
-            'lead': grouping['minority_lead'],
-            'opinion': minority_draft,
-            'group_members': grouping['minority']
-        }
+        results['minority_rankings'] = minority_rankings
 
     return results
 
 
-async def _write_group_draft(
+async def _rank_within_group(
     user_query: str,
-    group_opinions: List[str],
+    group_members: List[str],
+    opinions_by_model: Dict[str, str],
+    is_majority: bool
+) -> Dict[str, Any]:
+    """Have group members rank opinions within their group."""
+    group_type = "majority" if is_majority else "minority"
+
+    # Create anonymized labels for group opinions
+    labels = [chr(65 + i) for i in range(len(group_members))]  # A, B, C, ...
+
+    label_to_model = {
+        f"Opinion {label}": model
+        for label, model in zip(labels, group_members)
+    }
+
+    # Build the opinions text
+    opinions_text = "\n\n".join([
+        f"Opinion {label}:\n{opinions_by_model.get(model, 'No opinion available')}"
+        for label, model in zip(labels, group_members)
+    ])
+
+    ranking_prompt = f"""You are a Justice on the {group_type} side of an AI Supreme Court. You are evaluating the opinions of your fellow {group_type} justices.
+
+Case/Question: {user_query}
+
+Here are the opinions from your fellow {group_type} justices (anonymized):
+
+{opinions_text}
+
+Your task:
+1. Evaluate each opinion based on:
+   - Quality of reasoning and argumentation
+   - Comprehensiveness of analysis
+   - Persuasiveness and clarity
+   - Alignment with the {group_type} position
+2. Provide a final ranking from best to worst
+
+IMPORTANT: Your final ranking MUST be formatted EXACTLY as follows:
+- Start with the line "FINAL RANKING:" (all caps, with colon)
+- Then list the opinions from best to worst as a numbered list
+- Each line should be: number, period, space, then ONLY the opinion label (e.g., "1. Opinion A")
+
+Example format:
+FINAL RANKING:
+1. Opinion C
+2. Opinion A
+3. Opinion B
+
+Now provide your evaluation and ranking:"""
+
+    messages = [{"role": "user", "content": ranking_prompt}]
+
+    # Get rankings from all group members in parallel
+    responses = await query_models_parallel(group_members, messages)
+
+    rankings = []
+    for model, response in responses.items():
+        if response is not None:
+            full_text = response.get('content', '')
+            parsed = _parse_ranking_from_text(full_text)
+            rankings.append({
+                "model": model,
+                "ranking": full_text,
+                "parsed_ranking": parsed
+            })
+
+    return {
+        "rankings": rankings,
+        "label_to_model": label_to_model
+    }
+
+
+async def stage3_synthesize_opinions(
+    user_query: str,
+    stage1_results: List[Dict[str, Any]],
+    stage2_results: Dict[str, Any],
+    grouping: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Stage 3: Leads synthesize final opinions incorporating group peer feedback.
+
+    Args:
+        user_query: The original case/question
+        stage1_results: Individual opinions from Stage 1
+        stage2_results: Within-group rankings from Stage 2
+        grouping: Clerk's grouping decision
+
+    Returns:
+        Dict with synthesized opinions (ready for Stage 4 & 5 completion)
+    """
+    results = {}
+
+    # Get opinions by model for easy lookup
+    opinions_by_model = {r['model']: r['response'] for r in stage1_results}
+
+    # Majority opinion synthesis
+    majority_opinion = await _synthesize_group_opinion(
+        user_query,
+        grouping['majority'],
+        opinions_by_model,
+        stage2_results.get('majority_rankings', {}),
+        grouping['majority_lead'],
+        is_majority=True
+    )
+    results['majority'] = majority_opinion
+
+    # Minority opinion synthesis (if split decision)
+    if not grouping['consensus'] and grouping['minority']:
+        minority_opinion = await _synthesize_group_opinion(
+            user_query,
+            grouping['minority'],
+            opinions_by_model,
+            stage2_results.get('minority_rankings', {}),
+            grouping['minority_lead'],
+            is_majority=False
+        )
+        results['minority'] = minority_opinion
+
+    return results
+
+
+async def _synthesize_group_opinion(
+    user_query: str,
+    group_members: List[str],
+    opinions_by_model: Dict[str, str],
+    group_rankings: Dict[str, Any],
     lead_model: str,
     is_majority: bool
-) -> str:
-    """Write a draft opinion synthesizing group members' views."""
+) -> Dict[str, Any]:
+    """Synthesize a group's opinion based on individual opinions and peer rankings."""
     opinion_type = "Majority" if is_majority else "Dissenting"
 
-    # Anonymize the opinions
-    labels = [chr(65 + i) for i in range(len(group_opinions))]
-    anonymized_text = "\n\n".join([
-        f"Justice {label}'s Position:\n{opinion}"
-        for label, opinion in zip(labels, group_opinions)
+    # Anonymize the group opinions
+    labels = [chr(65 + i) for i in range(len(group_members))]
+    anonymized_opinions = "\n\n".join([
+        f"Justice {label}'s Opinion:\n{opinions_by_model.get(model, 'No opinion')}"
+        for label, model in zip(labels, group_members)
     ])
+
+    # Summarize the peer rankings
+    rankings_summary = ""
+    if group_rankings and 'rankings' in group_rankings:
+        rankings_summary = "\n\nPEER FEEDBACK SUMMARY:\n"
+        for rank_data in group_rankings['rankings']:
+            rankings_summary += f"\n{rank_data.get('model', 'Unknown')} ranked:\n{rank_data.get('ranking', 'No ranking')[:500]}...\n"
 
     prompt = f"""You are the Lead Justice writing the {opinion_type} Opinion for an AI Supreme Court.
 
 Case/Question: {user_query}
 
-Your fellow justices in the {opinion_type.lower()} have provided their individual positions (anonymized):
+Your fellow {opinion_type.lower()} justices have provided their individual opinions (anonymized):
 
-{anonymized_text}
+{anonymized_opinions}
+
+{rankings_summary}
 
 YOUR TASK:
-Write a cohesive {opinion_type} Opinion that:
-1. Synthesizes the key arguments and reasoning from your fellow justices
-2. Presents a unified position on the case
-3. Addresses the main points of contention
-4. Provides clear reasoning for the {opinion_type.lower()}'s position
+Write a comprehensive {opinion_type} Opinion that:
+1. Synthesizes the strongest arguments from your fellow justices
+2. Addresses weaknesses identified in the peer feedback
+3. Presents a unified, well-reasoned position
+4. Uses formal Supreme Court opinion style
 
-Write in the formal style of a Supreme Court opinion. Begin with a statement of the issue and the {opinion_type.lower()}'s position, then present the reasoning.
+Begin with "The {opinion_type.lower()} holds that..." and present the complete opinion.
 
 {opinion_type.upper()} OPINION:"""
 
@@ -399,251 +459,84 @@ Write in the formal style of a Supreme Court opinion. Begin with a statement of 
     response = await query_model(lead_model, messages)
 
     if response is None:
-        return f"Error: {lead_model} failed to generate draft opinion."
-
-    return response.get('content', '')
-
-
-async def stage4_rate_draft_opinions(
-    user_query: str,
-    draft_opinions: Dict[str, Any],
-    grouping: Dict[str, Any]
-) -> Dict[str, Any]:
-    """
-    Stage 4: Group members rate their group's draft opinion.
-
-    Each member provides feedback on the draft, rating its quality
-    and suggesting improvements.
-
-    Args:
-        user_query: The original case/question
-        draft_opinions: Draft opinions from Stage 3
-        grouping: Clerk's grouping decision
-
-    Returns:
-        Dict with ratings for majority (and minority if split)
-    """
-    results = {}
-
-    # Rate majority opinion
-    majority_members = [m for m in grouping['majority'] if m != grouping['majority_lead']]
-    if majority_members:
-        majority_ratings = await _rate_group_opinion(
-            user_query,
-            draft_opinions['majority_draft']['opinion'],
-            majority_members,
-            is_majority=True
-        )
-        results['majority_ratings'] = majority_ratings
-
-    # Rate minority opinion (if exists)
-    if 'minority_draft' in draft_opinions and grouping['minority']:
-        minority_members = [m for m in grouping['minority'] if m != grouping['minority_lead']]
-        if minority_members:
-            minority_ratings = await _rate_group_opinion(
-                user_query,
-                draft_opinions['minority_draft']['opinion'],
-                minority_members,
-                is_majority=False
-            )
-            results['minority_ratings'] = minority_ratings
-
-    return results
-
-
-async def _rate_group_opinion(
-    user_query: str,
-    draft_opinion: str,
-    member_models: List[str],
-    is_majority: bool
-) -> List[Dict[str, Any]]:
-    """Have group members rate their draft opinion."""
-    opinion_type = "Majority" if is_majority else "Dissenting"
-
-    rating_prompt = f"""You are a Justice on an AI Supreme Court reviewing the draft {opinion_type} Opinion written by your Lead Justice.
-
-Case/Question: {user_query}
-
-DRAFT {opinion_type.upper()} OPINION:
-{draft_opinion}
-
-YOUR TASK:
-Evaluate this draft opinion and provide:
-
-1. RATING (1-10): Rate the overall quality of this opinion
-2. STRENGTHS: What does this opinion do well?
-3. WEAKNESSES: What could be improved?
-4. SUGGESTIONS: Specific suggestions for the final version
-
-Format your response as:
-RATING: [number 1-10]
-STRENGTHS: [your analysis]
-WEAKNESSES: [your analysis]
-SUGGESTIONS: [your suggestions]"""
-
-    messages = [{"role": "user", "content": rating_prompt}]
-
-    # Query all member models in parallel
-    responses = await query_models_parallel(member_models, messages)
-
-    results = []
-    for model, response in responses.items():
-        if response is not None:
-            content = response.get('content', '')
-            rating = _extract_rating(content)
-            results.append({
-                "model": model,
-                "feedback": content,
-                "rating": rating
-            })
-
-    return results
-
-
-def _extract_rating(feedback: str) -> Optional[int]:
-    """Extract numeric rating from feedback."""
-    import re
-
-    match = re.search(r'RATING:\s*(\d+)', feedback, re.IGNORECASE)
-    if match:
-        rating = int(match.group(1))
-        return min(max(rating, 1), 10)  # Clamp to 1-10
-
-    # Fallback: look for any standalone number near start
-    match = re.search(r'^.*?(\d+)/10', feedback)
-    if match:
-        return min(max(int(match.group(1)), 1), 10)
-
-    return None
-
-
-async def stage5_synthesize_final_opinions(
-    user_query: str,
-    draft_opinions: Dict[str, Any],
-    ratings: Dict[str, Any],
-    grouping: Dict[str, Any]
-) -> Dict[str, Any]:
-    """
-    Stage 5: Leads synthesize final opinions incorporating peer feedback.
-
-    Args:
-        user_query: The original case/question
-        draft_opinions: Draft opinions from Stage 3
-        ratings: Ratings from Stage 4
-        grouping: Clerk's grouping decision
-
-    Returns:
-        Dict with final opinions
-    """
-    results = {}
-
-    # Final majority opinion
-    majority_feedback = ratings.get('majority_ratings', [])
-    majority_final = await _synthesize_final_opinion(
-        user_query,
-        draft_opinions['majority_draft']['opinion'],
-        majority_feedback,
-        grouping['majority_lead'],
-        is_majority=True
-    )
-
-    results['majority_opinion'] = {
-        'lead': grouping['majority_lead'],
-        'opinion': majority_final,
-        'group_members': grouping['majority'],
-        'average_rating': _calculate_average_rating(majority_feedback)
-    }
-
-    # Final minority opinion (if exists)
-    if 'minority_draft' in draft_opinions:
-        minority_feedback = ratings.get('minority_ratings', [])
-        minority_final = await _synthesize_final_opinion(
-            user_query,
-            draft_opinions['minority_draft']['opinion'],
-            minority_feedback,
-            grouping['minority_lead'],
-            is_majority=False
-        )
-
-        results['minority_opinion'] = {
-            'lead': grouping['minority_lead'],
-            'opinion': minority_final,
-            'group_members': grouping['minority'],
-            'average_rating': _calculate_average_rating(minority_feedback)
+        return {
+            "lead": lead_model,
+            "opinion": f"Error: {lead_model} failed to generate opinion.",
+            "group_members": group_members,
+            "status": "error"
         }
 
-    return results
+    return {
+        "lead": lead_model,
+        "opinion": response.get('content', ''),
+        "group_members": group_members,
+        "status": "completed"
+    }
 
 
-async def _synthesize_final_opinion(
-    user_query: str,
-    draft_opinion: str,
-    feedback: List[Dict[str, Any]],
-    lead_model: str,
-    is_majority: bool
-) -> str:
-    """Synthesize final opinion incorporating peer feedback."""
-    opinion_type = "Majority" if is_majority else "Dissenting"
+async def stage4_complete_majority_opinion(
+    synthesized_opinions: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Stage 4: Finalize and return the majority opinion.
 
-    # Anonymize feedback
-    if feedback:
-        labels = [chr(65 + i) for i in range(len(feedback))]
-        feedback_text = "\n\n".join([
-            f"Justice {label}'s Feedback:\n{f['feedback']}"
-            for label, f in zip(labels, feedback)
-        ])
-    else:
-        feedback_text = "No peer feedback available."
+    Args:
+        synthesized_opinions: Results from Stage 3
 
-    prompt = f"""You are the Lead Justice finalizing the {opinion_type} Opinion for an AI Supreme Court.
+    Returns:
+        Completed majority opinion
+    """
+    majority = synthesized_opinions.get('majority', {})
 
-Case/Question: {user_query}
-
-YOUR DRAFT OPINION:
-{draft_opinion}
-
-PEER FEEDBACK (anonymized):
-{feedback_text}
-
-YOUR TASK:
-Write the FINAL {opinion_type} Opinion, incorporating the valuable feedback from your fellow justices. Consider:
-1. Addressing weaknesses identified in the feedback
-2. Strengthening arguments where suggested
-3. Maintaining the core position while improving clarity and reasoning
-4. Ensuring the opinion represents the collective view of the {opinion_type.lower()}
-
-Write the complete, polished final opinion in formal Supreme Court style.
-
-FINAL {opinion_type.upper()} OPINION OF THE COURT:"""
-
-    messages = [{"role": "user", "content": prompt}]
-    response = await query_model(lead_model, messages)
-
-    if response is None:
-        return draft_opinion  # Fall back to draft
-
-    return response.get('content', '')
+    return {
+        "lead": majority.get('lead'),
+        "opinion": majority.get('opinion', ''),
+        "group_members": majority.get('group_members', []),
+        "status": "completed"
+    }
 
 
-def _calculate_average_rating(feedback: List[Dict[str, Any]]) -> Optional[float]:
-    """Calculate average rating from feedback."""
-    ratings = [f['rating'] for f in feedback if f.get('rating') is not None]
-    if ratings:
-        return round(sum(ratings) / len(ratings), 2)
-    return None
+async def stage5_complete_dissent_opinion(
+    synthesized_opinions: Dict[str, Any],
+    is_consensus: bool
+) -> Optional[Dict[str, Any]]:
+    """
+    Stage 5: Finalize and return the dissenting opinion (if split decision).
+
+    Args:
+        synthesized_opinions: Results from Stage 3
+        is_consensus: Whether this is a unanimous decision
+
+    Returns:
+        Completed dissenting opinion, or None if consensus
+    """
+    if is_consensus:
+        return None
+
+    minority = synthesized_opinions.get('minority', {})
+
+    if not minority:
+        return None
+
+    return {
+        "lead": minority.get('lead'),
+        "opinion": minority.get('opinion', ''),
+        "group_members": minority.get('group_members', []),
+        "status": "completed"
+    }
 
 
 async def run_supreme_court(user_query: str) -> Dict[str, Any]:
     """
     Run the complete Supreme Court deliberation process.
 
-    Stages:
-    1. Collect individual justice opinions
-    2. Anonymized peer rankings
-    3. Clerk groups justices (majority/minority or consensus)
-    4. Leads write draft opinions
-    5. Group members rate drafts
-    6. Leads synthesize final opinions
+    Flow:
+    1. Stage 1: Collect individual justice opinions
+    2. Clerk Stage: Analyze and group justices
+    3. Stage 2: Within-group peer rankings
+    4. Stage 3: Leads synthesize opinions
+    5. Stage 4: Majority opinion completed
+    6. Stage 5: Dissenting opinion completed (if split)
 
     Args:
         user_query: The case/question
@@ -658,51 +551,44 @@ async def run_supreme_court(user_query: str) -> Dict[str, Any]:
         return {
             "error": "All justices failed to respond. Please try again.",
             "stage1": [],
-            "stage2": [],
             "grouping": {},
-            "draft_opinions": {},
-            "ratings": {},
-            "final_opinions": {}
+            "stage2": {},
+            "stage3": {},
+            "majority_opinion": {},
+            "dissent_opinion": None
         }
 
-    # Stage 2: Collect peer rankings
-    stage2_results, label_to_model = await stage2_collect_rankings(
-        user_query, stage1_results
-    )
-
-    # Calculate aggregate rankings
-    aggregate_rankings = calculate_aggregate_rankings(stage2_results, label_to_model)
-
     # Clerk Stage: Analyze and group
-    grouping = await clerk_analyze_and_group(
-        user_query, stage1_results, stage2_results, aggregate_rankings
-    )
+    grouping = await clerk_analyze_and_group(user_query, stage1_results)
 
-    # Stage 3: Write draft opinions
-    draft_opinions = await stage3_write_draft_opinions(
+    # Stage 2: Within-group peer rankings
+    stage2_results = await stage2_within_group_rankings(
         user_query, stage1_results, grouping
     )
 
-    # Stage 4: Rate draft opinions
-    ratings = await stage4_rate_draft_opinions(
-        user_query, draft_opinions, grouping
+    # Stage 3: Leads synthesize opinions
+    stage3_results = await stage3_synthesize_opinions(
+        user_query, stage1_results, stage2_results, grouping
     )
 
-    # Stage 5: Synthesize final opinions
-    final_opinions = await stage5_synthesize_final_opinions(
-        user_query, draft_opinions, ratings, grouping
+    # Stage 4: Complete majority opinion
+    majority_opinion = await stage4_complete_majority_opinion(stage3_results)
+
+    # Stage 5: Complete dissenting opinion
+    dissent_opinion = await stage5_complete_dissent_opinion(
+        stage3_results, grouping['consensus']
     )
 
     return {
         "stage1": stage1_results,
-        "stage2": stage2_results,
         "grouping": grouping,
-        "draft_opinions": draft_opinions,
-        "ratings": ratings,
-        "final_opinions": final_opinions,
+        "stage2": stage2_results,
+        "stage3": stage3_results,
+        "majority_opinion": majority_opinion,
+        "dissent_opinion": dissent_opinion,
         "metadata": {
-            "label_to_model": label_to_model,
-            "aggregate_rankings": aggregate_rankings,
-            "consensus": grouping['consensus']
+            "consensus": grouping['consensus'],
+            "majority_count": len(grouping['majority']),
+            "minority_count": len(grouping.get('minority', []))
         }
     }

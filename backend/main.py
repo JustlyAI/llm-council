@@ -14,13 +14,12 @@ from .council import run_full_council, generate_conversation_title, stage1_colle
 from .supreme_court import (
     run_supreme_court,
     stage1_collect_justice_opinions,
-    stage2_collect_rankings as sc_stage2_collect_rankings,
     clerk_analyze_and_group,
-    stage3_write_draft_opinions,
-    stage4_rate_draft_opinions,
-    stage5_synthesize_final_opinions,
+    stage2_within_group_rankings,
+    stage3_synthesize_opinions,
+    stage4_complete_majority_opinion,
+    stage5_complete_dissent_opinion,
 )
-from .council import calculate_aggregate_rankings as calc_aggregate_rankings
 
 app = FastAPI(title="LLM Council API")
 
@@ -266,31 +265,30 @@ async def send_supreme_court_message_stream(conversation_id: str, request: SendM
             stage1_results = await stage1_collect_justice_opinions(request.content)
             yield f"data: {json.dumps({'type': 'sc_stage1_complete', 'data': stage1_results})}\n\n"
 
-            # Stage 2: Peer rankings
-            yield f"data: {json.dumps({'type': 'sc_stage2_start', 'message': 'Justices ranking opinions...'})}\n\n"
-            stage2_results, label_to_model = await sc_stage2_collect_rankings(request.content, stage1_results)
-            aggregate_rankings = calc_aggregate_rankings(stage2_results, label_to_model)
-            yield f"data: {json.dumps({'type': 'sc_stage2_complete', 'data': stage2_results, 'metadata': {'label_to_model': label_to_model, 'aggregate_rankings': aggregate_rankings}})}\n\n"
-
-            # Clerk Stage: Grouping
+            # Clerk Stage: Analyze and group justices
             yield f"data: {json.dumps({'type': 'sc_clerk_start', 'message': 'Clerk analyzing and grouping justices...'})}\n\n"
-            grouping = await clerk_analyze_and_group(request.content, stage1_results, stage2_results, aggregate_rankings)
+            grouping = await clerk_analyze_and_group(request.content, stage1_results)
             yield f"data: {json.dumps({'type': 'sc_clerk_complete', 'data': grouping})}\n\n"
 
-            # Stage 3: Draft opinions
-            yield f"data: {json.dumps({'type': 'sc_stage3_start', 'message': 'Leads writing draft opinions...'})}\n\n"
-            draft_opinions = await stage3_write_draft_opinions(request.content, stage1_results, grouping)
-            yield f"data: {json.dumps({'type': 'sc_stage3_complete', 'data': draft_opinions})}\n\n"
+            # Stage 2: Within-group peer rankings
+            yield f"data: {json.dumps({'type': 'sc_stage2_start', 'message': 'Within-group peer rankings...'})}\n\n"
+            stage2_results = await stage2_within_group_rankings(request.content, stage1_results, grouping)
+            yield f"data: {json.dumps({'type': 'sc_stage2_complete', 'data': stage2_results})}\n\n"
 
-            # Stage 4: Rate drafts
-            yield f"data: {json.dumps({'type': 'sc_stage4_start', 'message': 'Group members rating draft opinions...'})}\n\n"
-            ratings = await stage4_rate_draft_opinions(request.content, draft_opinions, grouping)
-            yield f"data: {json.dumps({'type': 'sc_stage4_complete', 'data': ratings})}\n\n"
+            # Stage 3: Leads synthesize opinions
+            yield f"data: {json.dumps({'type': 'sc_stage3_start', 'message': 'Leads synthesizing opinions from peer feedback...'})}\n\n"
+            stage3_results = await stage3_synthesize_opinions(request.content, stage1_results, stage2_results, grouping)
+            yield f"data: {json.dumps({'type': 'sc_stage3_complete', 'data': stage3_results})}\n\n"
 
-            # Stage 5: Final opinions
-            yield f"data: {json.dumps({'type': 'sc_stage5_start', 'message': 'Leads synthesizing final opinions...'})}\n\n"
-            final_opinions = await stage5_synthesize_final_opinions(request.content, draft_opinions, ratings, grouping)
-            yield f"data: {json.dumps({'type': 'sc_stage5_complete', 'data': final_opinions})}\n\n"
+            # Stage 4: Majority opinion completed
+            yield f"data: {json.dumps({'type': 'sc_stage4_start', 'message': 'Completing majority opinion...'})}\n\n"
+            majority_opinion = await stage4_complete_majority_opinion(stage3_results)
+            yield f"data: {json.dumps({'type': 'sc_stage4_complete', 'data': majority_opinion})}\n\n"
+
+            # Stage 5: Dissenting opinion completed (if split)
+            yield f"data: {json.dumps({'type': 'sc_stage5_start', 'message': 'Completing dissenting opinion...'})}\n\n"
+            dissent_opinion = await stage5_complete_dissent_opinion(stage3_results, grouping['consensus'])
+            yield f"data: {json.dumps({'type': 'sc_stage5_complete', 'data': dissent_opinion})}\n\n"
 
             # Wait for title generation
             if title_task:
@@ -301,15 +299,15 @@ async def send_supreme_court_message_stream(conversation_id: str, request: SendM
             # Build complete result for storage
             result = {
                 "stage1": stage1_results,
-                "stage2": stage2_results,
                 "grouping": grouping,
-                "draft_opinions": draft_opinions,
-                "ratings": ratings,
-                "final_opinions": final_opinions,
+                "stage2": stage2_results,
+                "stage3": stage3_results,
+                "majority_opinion": majority_opinion,
+                "dissent_opinion": dissent_opinion,
                 "metadata": {
-                    "label_to_model": label_to_model,
-                    "aggregate_rankings": aggregate_rankings,
-                    "consensus": grouping['consensus']
+                    "consensus": grouping['consensus'],
+                    "majority_count": len(grouping['majority']),
+                    "minority_count": len(grouping.get('minority', []))
                 }
             }
 

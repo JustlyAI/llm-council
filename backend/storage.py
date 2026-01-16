@@ -176,6 +176,14 @@ def add_supreme_court_message(conversation_id: str, result: Dict[str, Any]):
     """
     Add a Supreme Court deliberation result to a conversation.
 
+    Flow:
+    1. Stage 1: Individual justice opinions
+    2. Clerk Stage: Grouping into majority/minority
+    3. Stage 2: Within-group peer rankings
+    4. Stage 3: Leads synthesize opinions
+    5. Stage 4: Majority opinion completed
+    6. Stage 5: Dissenting opinion completed
+
     Args:
         conversation_id: Conversation identifier
         result: Complete Supreme Court result with all stages
@@ -188,11 +196,12 @@ def add_supreme_court_message(conversation_id: str, result: Dict[str, Any]):
         "role": "assistant",
         "type": "supreme_court",
         "stage1": result.get("stage1", []),
-        "stage2": result.get("stage2", []),
         "grouping": result.get("grouping", {}),
-        "draft_opinions": result.get("draft_opinions", {}),
-        "ratings": result.get("ratings", {}),
-        "final_opinions": result.get("final_opinions", {}),
+        "stage2": result.get("stage2", {}),
+        "stage3": result.get("stage3", {}),
+        "majority_opinion": result.get("majority_opinion", {}),
+        "dissent_opinion": result.get("dissent_opinion"),
+        "metadata": result.get("metadata", {}),
     })
 
     save_conversation(conversation)

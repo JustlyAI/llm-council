@@ -195,20 +195,21 @@ function App() {
       }));
 
       // Create a partial Supreme Court message that will be updated progressively
+      // New flow: Stage1 -> Clerk -> Stage2 -> Stage3 -> Stage4 -> Stage5
       const assistantMessage = {
         role: 'assistant',
         type: 'supreme_court',
         stage1: null,
-        stage2: null,
         grouping: null,
-        draft_opinions: null,
-        ratings: null,
-        final_opinions: null,
+        stage2: null,
+        stage3: null,
+        majority_opinion: null,
+        dissent_opinion: null,
         metadata: null,
         loading: {
           stage1: false,
-          stage2: false,
           clerk: false,
+          stage2: false,
           stage3: false,
           stage4: false,
           stage5: false,
@@ -243,26 +244,6 @@ function App() {
             });
             break;
 
-          case 'sc_stage2_start':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-              lastMsg.loading.stage2 = true;
-              return { ...prev, messages };
-            });
-            break;
-
-          case 'sc_stage2_complete':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-              lastMsg.stage2 = event.data;
-              lastMsg.metadata = event.metadata;
-              lastMsg.loading.stage2 = false;
-              return { ...prev, messages };
-            });
-            break;
-
           case 'sc_clerk_start':
             setCurrentConversation((prev) => {
               const messages = [...prev.messages];
@@ -282,6 +263,25 @@ function App() {
             });
             break;
 
+          case 'sc_stage2_start':
+            setCurrentConversation((prev) => {
+              const messages = [...prev.messages];
+              const lastMsg = messages[messages.length - 1];
+              lastMsg.loading.stage2 = true;
+              return { ...prev, messages };
+            });
+            break;
+
+          case 'sc_stage2_complete':
+            setCurrentConversation((prev) => {
+              const messages = [...prev.messages];
+              const lastMsg = messages[messages.length - 1];
+              lastMsg.stage2 = event.data;
+              lastMsg.loading.stage2 = false;
+              return { ...prev, messages };
+            });
+            break;
+
           case 'sc_stage3_start':
             setCurrentConversation((prev) => {
               const messages = [...prev.messages];
@@ -295,7 +295,7 @@ function App() {
             setCurrentConversation((prev) => {
               const messages = [...prev.messages];
               const lastMsg = messages[messages.length - 1];
-              lastMsg.draft_opinions = event.data;
+              lastMsg.stage3 = event.data;
               lastMsg.loading.stage3 = false;
               return { ...prev, messages };
             });
@@ -314,7 +314,7 @@ function App() {
             setCurrentConversation((prev) => {
               const messages = [...prev.messages];
               const lastMsg = messages[messages.length - 1];
-              lastMsg.ratings = event.data;
+              lastMsg.majority_opinion = event.data;
               lastMsg.loading.stage4 = false;
               return { ...prev, messages };
             });
@@ -333,7 +333,7 @@ function App() {
             setCurrentConversation((prev) => {
               const messages = [...prev.messages];
               const lastMsg = messages[messages.length - 1];
-              lastMsg.final_opinions = event.data;
+              lastMsg.dissent_opinion = event.data;
               lastMsg.loading.stage5 = false;
               return { ...prev, messages };
             });

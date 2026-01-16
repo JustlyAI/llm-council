@@ -3,12 +3,16 @@ import ReactMarkdown from 'react-markdown';
 import Stage1 from './Stage1';
 import Stage2 from './Stage2';
 import Stage3 from './Stage3';
+import SupremeCourtMessage from './SupremeCourtMessage';
 import './ChatInterface.css';
 
 export default function ChatInterface({
   conversation,
   onSendMessage,
+  onSendSupremeCourtMessage,
   isLoading,
+  mode,
+  onModeChange,
 }) {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef(null);
@@ -24,7 +28,11 @@ export default function ChatInterface({
   const handleSubmit = (e) => {
     e.preventDefault();
     if (input.trim() && !isLoading) {
-      onSendMessage(input);
+      if (mode === 'supreme-court') {
+        onSendSupremeCourtMessage(input);
+      } else {
+        onSendMessage(input);
+      }
       setInput('');
     }
   };
@@ -48,6 +56,51 @@ export default function ChatInterface({
     );
   }
 
+  const renderAssistantMessage = (msg) => {
+    // Check if this is a Supreme Court message
+    if (msg.type === 'supreme_court' || msg.grouping) {
+      return <SupremeCourtMessage message={msg} />;
+    }
+
+    // Regular council message
+    return (
+      <>
+        {/* Stage 1 */}
+        {msg.loading?.stage1 && (
+          <div className="stage-loading">
+            <div className="spinner"></div>
+            <span>Running Stage 1: Collecting individual responses...</span>
+          </div>
+        )}
+        {msg.stage1 && <Stage1 responses={msg.stage1} />}
+
+        {/* Stage 2 */}
+        {msg.loading?.stage2 && (
+          <div className="stage-loading">
+            <div className="spinner"></div>
+            <span>Running Stage 2: Peer rankings...</span>
+          </div>
+        )}
+        {msg.stage2 && (
+          <Stage2
+            rankings={msg.stage2}
+            labelToModel={msg.metadata?.label_to_model}
+            aggregateRankings={msg.metadata?.aggregate_rankings}
+          />
+        )}
+
+        {/* Stage 3 */}
+        {msg.loading?.stage3 && (
+          <div className="stage-loading">
+            <div className="spinner"></div>
+            <span>Running Stage 3: Final synthesis...</span>
+          </div>
+        )}
+        {msg.stage3 && <Stage3 finalResponse={msg.stage3} />}
+      </>
+    );
+  };
+
   return (
     <div className="chat-interface">
       <div className="messages-container">
@@ -70,40 +123,10 @@ export default function ChatInterface({
                 </div>
               ) : (
                 <div className="assistant-message">
-                  <div className="message-label">LLM Council</div>
-
-                  {/* Stage 1 */}
-                  {msg.loading?.stage1 && (
-                    <div className="stage-loading">
-                      <div className="spinner"></div>
-                      <span>Running Stage 1: Collecting individual responses...</span>
-                    </div>
-                  )}
-                  {msg.stage1 && <Stage1 responses={msg.stage1} />}
-
-                  {/* Stage 2 */}
-                  {msg.loading?.stage2 && (
-                    <div className="stage-loading">
-                      <div className="spinner"></div>
-                      <span>Running Stage 2: Peer rankings...</span>
-                    </div>
-                  )}
-                  {msg.stage2 && (
-                    <Stage2
-                      rankings={msg.stage2}
-                      labelToModel={msg.metadata?.label_to_model}
-                      aggregateRankings={msg.metadata?.aggregate_rankings}
-                    />
-                  )}
-
-                  {/* Stage 3 */}
-                  {msg.loading?.stage3 && (
-                    <div className="stage-loading">
-                      <div className="spinner"></div>
-                      <span>Running Stage 3: Final synthesis...</span>
-                    </div>
-                  )}
-                  {msg.stage3 && <Stage3 finalResponse={msg.stage3} />}
+                  <div className="message-label">
+                    {msg.type === 'supreme_court' || msg.grouping ? 'Supreme Court' : 'LLM Council'}
+                  </div>
+                  {renderAssistantMessage(msg)}
                 </div>
               )}
             </div>
@@ -113,7 +136,11 @@ export default function ChatInterface({
         {isLoading && (
           <div className="loading-indicator">
             <div className="spinner"></div>
-            <span>Consulting the council...</span>
+            <span>
+              {mode === 'supreme-court'
+                ? 'The Supreme Court is deliberating...'
+                : 'Consulting the council...'}
+            </span>
           </div>
         )}
 
@@ -121,24 +148,46 @@ export default function ChatInterface({
       </div>
 
       {conversation.messages.length === 0 && (
-        <form className="input-form" onSubmit={handleSubmit}>
-          <textarea
-            className="message-input"
-            placeholder="Ask your question... (Shift+Enter for new line, Enter to send)"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={isLoading}
-            rows={3}
-          />
-          <button
-            type="submit"
-            className="send-button"
-            disabled={!input.trim() || isLoading}
-          >
-            Send
-          </button>
-        </form>
+        <div className="input-container">
+          <div className="mode-toggle">
+            <button
+              type="button"
+              className={`mode-button ${mode === 'council' ? 'active' : ''}`}
+              onClick={() => onModeChange('council')}
+            >
+              LLM Council (4 models)
+            </button>
+            <button
+              type="button"
+              className={`mode-button supreme-court ${mode === 'supreme-court' ? 'active' : ''}`}
+              onClick={() => onModeChange('supreme-court')}
+            >
+              Supreme Court (9 justices)
+            </button>
+          </div>
+          <form className="input-form" onSubmit={handleSubmit}>
+            <textarea
+              className="message-input"
+              placeholder={
+                mode === 'supreme-court'
+                  ? 'Present your case to the Supreme Court... (Shift+Enter for new line, Enter to send)'
+                  : 'Ask your question... (Shift+Enter for new line, Enter to send)'
+              }
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              disabled={isLoading}
+              rows={3}
+            />
+            <button
+              type="submit"
+              className="send-button"
+              disabled={!input.trim() || isLoading}
+            >
+              {mode === 'supreme-court' ? 'Submit Case' : 'Send'}
+            </button>
+          </form>
+        </div>
       )}
     </div>
   );

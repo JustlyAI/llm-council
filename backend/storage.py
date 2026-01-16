@@ -170,3 +170,29 @@ def update_conversation_title(conversation_id: str, title: str):
 
     conversation["title"] = title
     save_conversation(conversation)
+
+
+def add_supreme_court_message(conversation_id: str, result: Dict[str, Any]):
+    """
+    Add a Supreme Court deliberation result to a conversation.
+
+    Args:
+        conversation_id: Conversation identifier
+        result: Complete Supreme Court result with all stages
+    """
+    conversation = get_conversation(conversation_id)
+    if conversation is None:
+        raise ValueError(f"Conversation {conversation_id} not found")
+
+    conversation["messages"].append({
+        "role": "assistant",
+        "type": "supreme_court",
+        "stage1": result.get("stage1", []),
+        "stage2": result.get("stage2", []),
+        "grouping": result.get("grouping", {}),
+        "draft_opinions": result.get("draft_opinions", {}),
+        "ratings": result.get("ratings", {}),
+        "final_opinions": result.get("final_opinions", {}),
+    })
+
+    save_conversation(conversation)

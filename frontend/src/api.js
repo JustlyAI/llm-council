@@ -112,4 +112,51 @@ export const api = {
       }
     }
   },
+
+  /**
+   * Send a message to the Supreme Court and receive streaming updates.
+   * @param {string} conversationId - The conversation ID
+   * @param {string} content - The message content
+   * @param {function} onEvent - Callback function for each event: (eventType, data) => void
+   * @returns {Promise<void>}
+   */
+  async sendSupremeCourtMessageStream(conversationId, content, onEvent) {
+    const response = await fetch(
+      `${API_BASE}/api/conversations/${conversationId}/supreme-court/stream`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ content }),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error('Failed to send Supreme Court message');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = decoder.decode(value);
+      const lines = chunk.split('\n');
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6);
+          try {
+            const event = JSON.parse(data);
+            onEvent(event.type, event);
+          } catch (e) {
+            console.error('Failed to parse SSE event:', e);
+          }
+        }
+      }
+    }
+  },
 };
